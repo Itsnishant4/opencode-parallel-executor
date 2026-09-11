@@ -1,7 +1,7 @@
 {
   "name": "opencode-parallel-executor",
   "version": "1.0.0",
-  "description": "High-performance parallel execution, ultra-fast caching, and autonomous developer acceleration plugin for OpenCode",
+  "description": "Make OpenCode 100x Faster: High-performance parallel execution, ultra-fast RAM caching, and autonomous developer acceleration plugin",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",

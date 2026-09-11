@@ -1,7 +1,8 @@
 <div align="center">
 
 # ⚡ OpenCode Parallel Executor
-### *The High-Speed Acceleration & Autonomous Execution Engine for [OpenCode](https://opencode.ai)*
+## 🔥 Make OpenCode 100x Faster
+### *Autonomous Parallel Acceleration, In-Memory Caching & Warm Shell Workers for [OpenCode](https://opencode.ai)*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-3B82F6.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -12,8 +13,7 @@
 
 <br />
 
-**Turn OpenCode into an autonomous speed demon.**  
-Zero-latency RAM caching • 10-lane concurrent parallel batching • Persistent warm shell workers • 1-click snapshot & undo • Multi-language auto-verifier.
+**Make OpenCode 100x Faster.** Turn OpenCode into an autonomous speed demon with zero-latency RAM caching, 10-lane concurrent parallel batching, persistent warm shell workers, 1-click snapshot & undo, and multi-language auto-verification.
 
 <br />
 
