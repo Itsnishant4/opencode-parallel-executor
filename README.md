@@ -163,8 +163,7 @@ Real-world benchmarks measured directly against the compiled plugin binaries on 
 ### 1. Zero-Spawn Persistent Shell Pool (`src/persistent-shell.ts`)
 - Keeps warm, pre-spawned `/bin/sh` workers running continuously in the background.
 - Standard input is permanently isolated via `( cd "${cwd}" && ${cmd} ) < /dev/null`, ensuring commands that read stdin (like `cat` or prompts) never cause deadlocks.
-- Strips `` and `
-` from directories to prevent subshell command breakout.
+- Strips `\r` and `\n` from directories to prevent subshell command breakout.
 
 ### 2. Full Write-After-Read (WAR) Hazard Protection (`src/dependency-graph.ts`)
 - Tracks `fileActiveReaders: Map<string, Set<string>>` so that mutations wait for **every** active concurrent reader before writing to disk.
@@ -175,7 +174,7 @@ Real-world benchmarks measured directly against the compiled plugin binaries on 
 - Implements **compensation rollback**: preserves original file contents in RAM and restores all files if any disk write fails.
 
 ### 4. Output Compactor & Stream Sanitizer (`src/compact-output.ts`)
-- Resolves carriage returns (``), eliminating noisy terminal progress bars and spinner ticks.
+- Resolves carriage returns (`\r`), eliminating noisy terminal progress bars and spinner ticks.
 - Collapses duplicate log lines and preserves critical intermediate error lines between header and tail snippets.
 - Caps gigantic streams at 500KB to protect against V8 heap exhaustion.
 
