@@ -21,7 +21,7 @@ Zero-latency RAM caching • 10-lane concurrent parallel batching • Persistent
 [**Benchmarks**](#-performance-benchmarks) •
 [**Core Features**](#-core-capabilities) •
 [**Tool Catalog**](#-complete-tool-catalog-29-tools) •
-[**Architecture**](#-architecture-overview) •
+[**Star History**](#-star-history--community) •
 [**Sponsor**](#-support--sponsorship)
 
 <br /><br />
@@ -294,21 +294,46 @@ All 7 test suites pass with zero warnings and zero regressions.
 
 ---
 
-## ☕ Support & Sponsorship
-
-If **OpenCode Parallel Executor** saved you time, reduced token costs, or accelerated your AI workflows, consider supporting the project!
+## 📈 Star History & Community
 
 <div align="center">
 
+<br />
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Itsnishant4/opencode-parallel-executor&type=Date)](https://star-history.com/#Itsnishant4/opencode-parallel-executor&Date)
+
+<br />
+
+[![GitHub Stars](https://img.shields.io/github/stars/Itsnishant4/opencode-parallel-executor?style=for-the-badge&color=FFE100&logo=github)](https://github.com/Itsnishant4/opencode-parallel-executor/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/Itsnishant4/opencode-parallel-executor?style=for-the-badge&color=00D26A&logo=github)](https://github.com/Itsnishant4/opencode-parallel-executor/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/Itsnishant4/opencode-parallel-executor?style=for-the-badge&color=F87171&logo=github)](https://github.com/Itsnishant4/opencode-parallel-executor/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/Itsnishant4/opencode-parallel-executor?style=for-the-badge&color=60A5FA&logo=github)](https://github.com/Itsnishant4/opencode-parallel-executor/pulls)
+
+</div>
+
+---
+
+## ☕ Support & Sponsoring
+
+<div align="center">
+
+### *Loved the speed? Help keep the momentum going!* 🚀
+
+If **OpenCode Parallel Executor** saved you tokens, reduced wait times, or transformed your autonomous coding flow, consider buying me a coffee. Every coffee directly fuels continuous performance enhancements, new autonomous tools, and active maintenance!
+
+<br />
+
 <a href="https://www.buymeacoffee.com/Nishant4" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="220" />
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="58" style="border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.18);" />
 </a>
 
 <br /><br />
 
-**Support development at [buymeacoffee.com/Nishant4](https://www.buymeacoffee.com/Nishant4)**
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Nishant4-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/Nishant4)
 
-<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="Nishant4" data-color="#FFDD00" data-emoji="☕" data-font="Cookie" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#000000" data-coffee-color="#ffffff"></script>
+<br />
+
+👉 **[buymeacoffee.com/Nishant4](https://www.buymeacoffee.com/Nishant4)**
 
 </div>
 
