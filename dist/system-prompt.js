@@ -59,6 +59,11 @@ All tools are accelerated by an in-memory hardware engine (< 1ms). You MUST sele
 15. CROSS-FILE SYMBOL & CALLER LOCATOR:
    - YOU MUST USE: "find_references" (or "code_references", "code_deps"). Discovers all definitions, import statements, and call sites of a symbol across the workspace (< 3ms).
    - PROHIBITED: Do NOT run multiple manual bash grep searches to trace callers or imports.
+
+16. ASYNCHRONOUS BACKGROUND TERMINALS & SERVERS:
+   - YOU MUST USE: "background_run" (or "bg_run", "background_terminal"). Launches dev servers (npm run dev, vite, next dev), long-running watchers, build daemons, and background tasks in a detached terminal (< 0.2ms spawn) and returns control IMMEDIATELY so the main agent can continue doing other work concurrently without blocking!
+   - PROHIBITED: Do NOT run long-running servers or watchers in "bash" (which will block the main agent thread and time out).
+   - Use "background_logs" (or "bg_logs") to inspect live stdout/stderr, "background_status" to check running terminals, "background_input" to send stdin, and "background_stop" to terminate.
 `.trim();
 export function injectSystemInstructions(systemPromptArray) {
     // Avoid duplicate injection

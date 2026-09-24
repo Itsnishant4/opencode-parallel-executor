@@ -139,9 +139,15 @@ opencode debug config | grep "opencode-parallel-executor"
 - Preserves critical error lines between snippets so compiler error context is never lost.
 - **Cuts LLM context token usage by 50%–75%**, dramatically lowering latency and API costs.
 
+### ⚡ 9. Asynchronous Background Terminals (`background_run` / `background_terminal`)
+- **True Non-Blocking Concurrency**: Spawns dev servers (`vite`, `next dev`, `nodemon`), long-running watchers, build daemons, and background tasks in an independent, detached process group.
+- **Agent Keeps Working**: Returns control **immediately** (< 0.2ms spawn) with initial startup banners and logs, allowing the main agent to continue editing code, reading files, and executing other commands concurrently!
+- **Interactive Stdin & Live Log Streaming**: Send input (`background_input`) to interactive prompts or nodemon (`rs`), read ring-buffered stdout/stderr (`background_logs`) with regex search, and inspect all running jobs in an ASCII overview table (`background_status`).
+- **Orphan-Proof Tree Termination**: `background_stop` reliably tree-kills the entire process group (`process.kill(-pid)`), ensuring child processes like Node/Vite don't linger holding ports.
+
 ---
 
-## ⚡ Complete Tool Catalog (29 Tools)
+## ⚡ Complete Tool Catalog (35+ Tools)
 
 | Category | Tool | Speed | Description | Safety & Guarantees |
 | :--- | :--- | :---: | :--- | :--- |
@@ -151,6 +157,12 @@ opencode debug config | grep "opencode-parallel-executor"
 | **Fast Aliases** | `fast_read`, `fast_write` | **< 0.5ms** | Explicit zero-latency file I/O aliases. | RAM caching, kqueue invalidation. |
 | | `fast_edit`, `fast_bash` | **< 1ms** | Fast-path editing and persistent shell. | In-process execution for simple commands. |
 | | `fast_glob`, `fast_grep` | **< 5ms** | Fast search aliases. | Hardware regex searching. |
+| **Background Terminals** | `background_run`, `bg_run` | **< 0.2ms** | Runs terminal processes in the background without blocking main agent. | Detached process group, non-blocking return. |
+| | `background_status`, `bg_status` | **< 0.1ms** | Inspects background process status or lists overview table. | PID, uptime, lines captured, exit codes. |
+| | `background_logs`, `bg_logs` | **< 0.5ms** | Reads live stdout/stderr logs from background terminal. | 5,000-line ring buffer, regex search, tail limit. |
+| | `background_input`, `bg_input` | **< 0.1ms** | Sends stdin input to active background terminal. | Stdin stream writing, interactive prompt handling. |
+| | `background_stop`, `bg_stop` | **< 2ms** | Gracefully stops or force-kills background process tree. | Process group tree kill, port release guarantee. |
+| | `background_terminal` | **Master** | Unified multi-action controller for background terminals. | Supports run, status, logs, input, stop, list. |
 | **Concurrency** | `batch_execute` | **10 Lanes** | High-concurrency parallel runner. | Up to 30 parallel lanes; 10 tasks in ~14ms. |
 | | `turbo_parallel` | **10 Lanes** | High-speed batch alias. | Heterogeneous task dispatch. |
 | | `parallel_execute` | **DAG** | Dependency-analyzed workflow scheduler. | Kahn's algorithm, Write-After-Read (WAR) protection. |
@@ -270,6 +282,48 @@ If anything breaks, roll back instantly in 1ms:
 ```json
 // Restore snapshot
 { "label": "before-auth-refactor" }
+```
+</details>
+
+<details>
+<summary><b>4. Asynchronous Background Terminals (<code>background_run</code> & <code>background_logs</code>)</b></summary>
+
+Start a dev server or long-running daemon in the background without blocking the main agent:
+
+```json
+// Start Vite dev server in the background (returns control immediately!)
+{
+  "command": "npm run dev",
+  "id": "dev-server"
+}
+```
+
+The tool returns control **immediately** with initial startup logs. The main agent can continue editing files, running tests, or answering questions concurrently without waiting!
+
+Check live logs or inspect status at any time:
+```json
+// Read the last 50 lines of logs with optional search filter
+{
+  "id": "dev-server",
+  "lines": 50,
+  "search": "Local:"
+}
+```
+
+Send stdin input (e.g. typing `rs` to restart nodemon or responding to prompts):
+```json
+{
+  "id": "dev-server",
+  "input": "rs"
+}
+```
+
+Stop the server and release ports safely:
+```json
+{
+  "id": "dev-server",
+  "force": true
+}
 ```
 </details>
 

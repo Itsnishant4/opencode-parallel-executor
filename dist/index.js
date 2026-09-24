@@ -20,6 +20,7 @@ import { GitChangesInspector, GitChangesArgsSchema } from "./git-changes.js";
 import { CodebaseVerifier, VerifyArgsSchema } from "./verifier.js";
 import { WorkingTreeSnapshotManager, SnapshotArgsSchema, UndoArgsSchema } from "./snapshots.js";
 import { CodeReferenceLocator, FindReferencesArgsSchema } from "./references.js";
+import { BackgroundTerminalManager, BackgroundRunArgsSchema, BackgroundStatusArgsSchema, BackgroundLogsArgsSchema, BackgroundInputArgsSchema, BackgroundStopArgsSchema, BackgroundTerminalMasterArgsSchema, } from "./background-terminal.js";
 const hasBun = typeof Bun !== "undefined";
 export const ParallelExecutorPlugin = async (pluginInput) => {
     const rootDir = pluginInput.directory || pluginInput.worktree || process.cwd();
@@ -34,6 +35,7 @@ export const ParallelExecutorPlugin = async (pluginInput) => {
     const verifier = new CodebaseVerifier(rootDir);
     const snapshotManager = WorkingTreeSnapshotManager.getInstance(rootDir);
     const refLocator = new CodeReferenceLocator(rootDir);
+    const bgManager = BackgroundTerminalManager.getInstance(rootDir);
     // Initialize background RAM pre-warming and native filesystem kqueue watcher
     const watcher = FastWatcher.getInstance(rootDir);
     watcher.start();
@@ -247,6 +249,9 @@ export const ParallelExecutorPlugin = async (pluginInput) => {
             else if (/^\s*(grep|ripgrep|rg)\s+/.test(trimmed)) {
                 hint = "\n💡 Notice: Please use the specialized 'grep' tool for multithreaded code search.";
             }
+            else if (/\s*&\s*$/.test(trimmed) || /^(npm\s+run\s+dev|yarn\s+dev|pnpm\s+dev|bun\s+dev|vite|next\s+dev|python.*-m\s+http\.server)/.test(trimmed)) {
+                hint = "\n💡 Notice: For long-running servers or background tasks, use 'background_run' so the process runs in the background without blocking the main agent thread.";
+            }
             return `${tag} (Exit: ${res.exitCode}, ${res.durationMs}ms)\n${output}${hint}`;
         },
     });
@@ -385,6 +390,56 @@ export const ParallelExecutorPlugin = async (pluginInput) => {
             return refLocator.findReferences(args, sessionDir);
         },
     });
+    // 16. Asynchronous Background Terminal Runner (Non-blocking worker process)
+    const backgroundRunTool = tool({
+        description: "Launch long-running commands, dev servers (vite, next dev, nodemon), build daemons, test watchers, and background tasks in a detached background terminal (< 0.2ms). Returns control IMMEDIATELY so the main agent can continue doing other work concurrently without blocking.",
+        args: BackgroundRunArgsSchema,
+        async execute(args, context) {
+            const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
+            return bgManager.start(args, sessionDir);
+        },
+    });
+    // 17. Background Terminal Status & Listing Tool
+    const backgroundStatusTool = tool({
+        description: "Inspect status of a specific background terminal (PID, uptime, exit code, log file) or list all active and recent background terminals in an overview table.",
+        args: BackgroundStatusArgsSchema,
+        async execute(args) {
+            return bgManager.getStatus(args.id);
+        },
+    });
+    // 18. Background Terminal Log Reader Tool
+    const backgroundLogsTool = tool({
+        description: "Read live stdout/stderr logs from a background terminal. Supports tailing recent lines, pagination offset, regex/substring searching, and clearing buffer.",
+        args: BackgroundLogsArgsSchema,
+        async execute(args) {
+            return bgManager.getLogs(args);
+        },
+    });
+    // 19. Background Terminal Stdin Input Tool
+    const backgroundInputTool = tool({
+        description: "Send stdin input to an actively running background terminal process (e.g. typing responses to interactive prompts, typing 'rs' for nodemon restart, answering confirmations).",
+        args: BackgroundInputArgsSchema,
+        async execute(args) {
+            return bgManager.sendInput(args);
+        },
+    });
+    // 20. Background Terminal Stop & Tree-Kill Tool
+    const backgroundStopTool = tool({
+        description: "Terminate a background terminal process and its entire process tree safely using SIGTERM (graceful) or SIGKILL (force).",
+        args: BackgroundStopArgsSchema,
+        async execute(args) {
+            return bgManager.stop(args);
+        },
+    });
+    // 21. Unified Master Background Terminal Controller
+    const backgroundTerminalMasterTool = tool({
+        description: "Master background terminal controller for OpenCode. Run, check status, view logs, send stdin, or terminate background processes without blocking the main agent thread.",
+        args: BackgroundTerminalMasterArgsSchema,
+        async execute(args, context) {
+            const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
+            return bgManager.executeMaster(args, sessionDir);
+        },
+    });
     return {
         tool: {
             // 1. High-Concurrency Batch & Dynamic Parallel Tools
@@ -426,6 +481,25 @@ export const ParallelExecutorPlugin = async (pluginInput) => {
             code_references: findReferencesTool,
             code_deps: findReferencesTool,
             fast_references: findReferencesTool,
+            // 6. Asynchronous Background Terminal Tools (Non-Blocking Process Concurrency)
+            background_terminal: backgroundTerminalMasterTool,
+            background_run: backgroundRunTool,
+            bg_run: backgroundRunTool,
+            background_terminal_run: backgroundRunTool,
+            background_status: backgroundStatusTool,
+            bg_status: backgroundStatusTool,
+            background_list: backgroundStatusTool,
+            bg_list: backgroundStatusTool,
+            background_logs: backgroundLogsTool,
+            bg_logs: backgroundLogsTool,
+            background_output: backgroundLogsTool,
+            background_input: backgroundInputTool,
+            bg_input: backgroundInputTool,
+            background_send: backgroundInputTool,
+            background_stop: backgroundStopTool,
+            bg_stop: backgroundStopTool,
+            background_kill: backgroundStopTool,
+            bg_kill: backgroundStopTool,
         },
         // Transparent Lifecycle Interception: Pre-warm cache on default tool calls
         "tool.execute.before": async (input, output) => {
@@ -448,6 +522,7 @@ export const ParallelExecutorPlugin = async (pluginInput) => {
             PersistentShell.getInstance().shutdown();
             FastFileCache.getInstance().clear();
             WorkingTreeSnapshotManager.getInstance().clear();
+            await bgManager.disposeAll();
         },
     };
 };

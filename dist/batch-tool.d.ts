@@ -21,9 +21,9 @@ export declare const BatchExecuteArgsSchema: {
     tasks: z.ZodOptional<z.ZodArray<z.ZodObject<{
         id: z.ZodOptional<z.ZodString>;
         type: z.ZodEnum<{
-            write: "write";
-            command: "command";
             read: "read";
+            command: "command";
+            write: "write";
             edit: "edit";
         }>;
         command: z.ZodOptional<z.ZodString>;
