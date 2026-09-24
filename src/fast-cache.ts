@@ -44,6 +44,18 @@ export class FastFileCache {
     return this.cache.size;
   }
 
+  public getStats(): { size: number; isWatching: boolean; memoryBytes: number } {
+    let memoryBytes = 0;
+    for (const entry of this.cache.values()) {
+      memoryBytes += (entry.content ? entry.content.length * 2 : 0);
+    }
+    return {
+      size: this.cache.size,
+      isWatching: this.isWatching,
+      memoryBytes,
+    };
+  }
+
   private normalize(filePath: string): string {
     return path.resolve(filePath);
   }

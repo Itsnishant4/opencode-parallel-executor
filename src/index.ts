@@ -30,6 +30,8 @@ import {
   BackgroundStopArgsSchema,
   BackgroundTerminalMasterArgsSchema,
 } from "./background-terminal.js";
+import { TerminalUI } from "./ui/terminal-ui.js";
+import { WebDashboardServer } from "./ui/web-dashboard.js";
 
 declare const Bun: {
   file(path: string): { text(): Promise<string> };
@@ -459,7 +461,11 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     description:
       "Inspect status of a specific background terminal (PID, uptime, exit code, log file) or list all active and recent background terminals in an overview table.",
     args: BackgroundStatusArgsSchema,
-    async execute(args) {
+    async execute(args, context) {
+      const sessionDir = typeof context?.directory === "string" ? context.directory : rootDir;
+      if (!args.id) {
+        return TerminalUI.renderDashboard(sessionDir);
+      }
       return bgManager.getStatus(args.id);
     },
   });
@@ -502,6 +508,47 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
       return bgManager.executeMaster(args, sessionDir);
+    },
+  });
+
+  // 22. Interactive UI Dashboard for OpenCode (Terminal TUI, Desktop App & Web Browser)
+  const dashboardTool = tool({
+    description:
+      "Interactive UI Dashboard for OpenCode (Terminal TUI, Desktop App, & Web Browser). Displays real-time background terminals, live streaming logs, RAM cache metrics, 10-lane concurrency monitor, and the 35+ accelerated tool catalog.",
+    args: {
+      target: tool.schema.enum(["terminal", "web", "desktop", "all"]).default("all").optional().describe("UI target to render: 'terminal' (ANSI TUI), 'web'/'desktop' (open in browser/app), or 'all' (both)."),
+      open: tool.schema.boolean().default(true).optional().describe("Whether to automatically open the Web/Desktop Dashboard in the system browser/app (default: true)."),
+      port: tool.schema.number().int().default(20888).optional().describe("Port number for local dashboard server (default: 20888)."),
+    },
+    async execute(args, context) {
+      const sessionDir = typeof context?.directory === "string" ? context.directory : rootDir;
+      const target = args.target || "all";
+      const webServer = WebDashboardServer.getInstance(sessionDir);
+
+      if (target === "terminal") {
+        return TerminalUI.renderDashboard(sessionDir);
+      }
+
+      const { url, port } = await webServer.start(args.port ?? 20888);
+      const staticFile = path.join(sessionDir, ".opencode", "dashboard.html");
+
+      if (args.open !== false) {
+        webServer.openInBrowser(url);
+      }
+
+      if (target === "all") {
+        const tui = TerminalUI.renderDashboard(sessionDir);
+        return `${tui}\n\n🌐 LIVE WEB & DESKTOP DASHBOARD ACTIVE:\n• Web App URL:      ${url}\n• Static HTML View: file://${staticFile}\n• Status:           Online & Listening on 127.0.0.1:${port}\n(Dashboard opened in your browser/desktop app)`;
+      }
+
+      return `🌐 OpenCode Parallel Executor & Background Terminal Dashboard
+======================================================================
+• Web App URL:       ${url}
+• Static HTML File:  file://${staticFile}
+• Server Status:     Online & Listening on 127.0.0.1:${port}
+======================================================================
+💡 Open the URL above to monitor live background terminals, read logs,
+inspect RAM cache metrics, and trigger 10-lane concurrency benchmarks!`;
     },
   });
 
@@ -570,6 +617,13 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
       bg_stop: backgroundStopTool,
       background_kill: backgroundStopTool,
       bg_kill: backgroundStopTool,
+
+      // 7. Interactive UI & Live Dashboards (Terminal TUI, Desktop App & Web Browser)
+      dashboard: dashboardTool,
+      ui: dashboardTool,
+      fast_dashboard: dashboardTool,
+      background_dashboard: dashboardTool,
+      terminal_ui: dashboardTool,
     },
     // Transparent Lifecycle Interception: Pre-warm cache on default tool calls
     "tool.execute.before": async (input, output) => {
@@ -593,6 +647,7 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
       FastFileCache.getInstance().clear();
       WorkingTreeSnapshotManager.getInstance().clear();
       await bgManager.disposeAll();
+      await WebDashboardServer.getInstance(rootDir).stop();
     },
   };
 };

@@ -8,6 +8,11 @@ export declare class FastFileCache {
     getWatching(): boolean;
     has(filePath: string): boolean;
     getCachedSize(): number;
+    getStats(): {
+        size: number;
+        isWatching: boolean;
+        memoryBytes: number;
+    };
     private normalize;
     get(filePath: string): Promise<string | null>;
     getLines(filePath: string, startLine: number, endLine: number, showLineNumbers?: boolean): Promise<{

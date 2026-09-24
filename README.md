@@ -178,6 +178,8 @@ opencode debug config | grep "opencode-parallel-executor"
 | | `snapshot`, `fast_snapshot` | **< 1ms** | In-memory working tree checkpoint. | Ring buffer (up to 20 checkpoints). |
 | | `undo`, `fast_undo` | **< 2ms** | Atomic rollback to any snapshot. | Never deletes git-tracked files with unlink. |
 | **Git & Versioning** | `git_changes`, `fast_diff` | **< 3ms** | Zero-fork git status, diffstat, & diff. | Direct in-process execution with zero shell cost. |
+| **UI & Dashboards** | `dashboard`, `ui` | **< 1ms** | Full Terminal TUI & Web/Desktop App Dashboard. | Real-time terminal logs, cache flush, 10 lanes. |
+| | `terminal_ui`, `fast_dashboard` | **< 1ms** | Direct TUI or browser view aliases. | Local HTTP server on :20888 + static HTML fallback. |
 
 ---
 

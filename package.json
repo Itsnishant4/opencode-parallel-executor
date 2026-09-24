@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "node test-audit-verification.mjs && node test-new-tools.mjs && node test-advanced-subsystems.mjs && node test-batch-benchmark.mjs && node test-background-terminal.mjs",
+    "test": "node test-audit-verification.mjs && node test-new-tools.mjs && node test-advanced-subsystems.mjs && node test-batch-benchmark.mjs && node test-background-terminal.mjs && node test-ui.mjs",
     "prepare": "tsc -p tsconfig.json"
   },
   "repository": {

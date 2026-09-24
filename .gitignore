@@ -5,3 +5,4 @@ node_modules
 .system_generated/
 scratch/
 .env
+.opencode/
