@@ -93,6 +93,32 @@ export function getDashboardHtml(initialData) {
     </div>
   </header>
 
+  <!-- Floating Toast Notifications Container -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 space-y-2 pointer-events-none max-w-sm w-full"></div>
+
+  <!-- Continuous Running Indicator Banner -->
+  <div id="continuous-running-banner" class="hidden bg-gradient-to-r from-emerald-950/90 via-slate-900/90 to-emerald-950/90 border-b border-emerald-500/40 px-6 py-2.5 transition-all duration-300">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div class="flex items-center space-x-3">
+        <span class="relative flex h-3 w-3">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+        </span>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="text-xs font-bold text-emerald-400">⚡ BACKGROUND TERMINAL ACTIVELY RUNNING</span>
+            <span id="banner-running-count" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">1 Job</span>
+          </div>
+          <p id="banner-running-summary" class="text-xs text-emerald-200/80 font-mono mt-0.5 truncate"></p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-3 text-xs">
+        <span class="text-slate-400 text-[11px] hidden md:inline">OpenCode agent is completely free for other tasks</span>
+        <button onclick="switchTab('terminals')" class="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs transition">View Output</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Navigation Tabs -->
   <div class="border-b border-darkborder bg-slate-950/40 px-6">
     <div class="max-w-7xl mx-auto flex space-x-8">
@@ -401,21 +427,29 @@ export function getDashboardHtml(initialData) {
       listEl.innerHTML = terms.map(t => {
         const isSelected = t.id === activeTerminalId;
         const isRunning = t.status === 'running';
-        const uptime = Math.round(((t.endTime || Date.now()) - t.startTime) / 1000) + 's';
+        const uptimeSec = Math.round(((t.endTime || Date.now()) - t.startTime) / 1000);
+        const uptime = uptimeSec + 's';
+        const cardBorder = isRunning
+          ? (isSelected ? 'bg-emerald-950/20 border-emerald-500 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/30' : 'bg-darkcard border-emerald-500/40 hover:border-emerald-500/70 shadow-sm')
+          : (isSelected ? 'bg-blue-950/20 border-blue-500/50 shadow-md shadow-blue-500/10' : 'bg-darkcard border-darkborder hover:border-slate-700');
+
         const statusBadge = isRunning 
-          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">RUNNING 🟢</span>'
+          ? '<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 animate-pulse"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>LIVE RUNNING</span>'
           : '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">EXIT(' + (t.exitCode ?? 0) + ') ⚪</span>';
 
         return \`
-          <div onclick="selectTerminal('\${t.id}')" class="cursor-pointer border rounded-2xl p-4 transition-all \${isSelected ? 'bg-blue-950/20 border-blue-500/50 shadow-md shadow-blue-500/10' : 'bg-darkcard border-darkborder hover:border-slate-700'}">
+          <div onclick="selectTerminal('\${t.id}')" class="cursor-pointer border rounded-2xl p-4 transition-all \${cardBorder}">
             <div class="flex items-center justify-between">
-              <span class="font-bold text-sm text-white font-mono">\${t.id}</span>
+              <span class="font-bold text-sm text-white font-mono flex items-center gap-2">
+                \${isRunning ? '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>' : ''}
+                \${t.id}
+              </span>
               \${statusBadge}
             </div>
             <div class="font-mono text-xs text-slate-300 mt-2 truncate bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-900">\${t.command}</div>
             <div class="flex items-center justify-between text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-900">
               <span>PID: \${t.pid ?? 'N/A'}</span>
-              <span>Uptime: \${uptime}</span>
+              <span>Uptime: <span class="live-uptime-ticker \${isRunning ? 'text-emerald-400 font-semibold' : ''}" data-start-time="\${t.startTime}" data-end-time="\${t.endTime || ''}" data-is-running="\${isRunning}">\${uptime}</span></span>
               \${isRunning ? \`<button onclick="event.stopPropagation(); stopTerminal('\${t.id}')" class="text-rose-400 hover:text-rose-300 font-semibold">Stop</button>\` : ''}
             </div>
           </div>
@@ -555,13 +589,88 @@ export function getDashboardHtml(initialData) {
       } catch {}
     }
 
+    const notifiedTerminals = new Set();
+    function showToast(title, message, isSuccess = true) {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = 'pointer-events-auto bg-slate-900/95 border ' + (isSuccess ? 'border-emerald-500/50 shadow-emerald-500/10' : 'border-rose-500/50 shadow-rose-500/10') + ' border rounded-xl p-3.5 shadow-2xl flex items-start space-x-3 transition-all duration-300 transform translate-y-2 opacity-0 backdrop-blur-md';
+      toast.innerHTML = 
+        '<span class="text-base">' + (isSuccess ? '🔔' : '⚠️') + '</span>' +
+        '<div class="flex-1 text-xs">' +
+        '  <div class="font-bold ' + (isSuccess ? 'text-emerald-300' : 'text-rose-300') + '">' + title + '</div>' +
+        '  <div class="text-[11px] text-slate-300 mt-1 whitespace-pre-wrap font-mono">' + message + '</div>' +
+        '</div>' +
+        '<button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white text-xs ml-2">✕</button>';
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      }, 10);
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 400);
+      }, 6000);
+    }
+
+    function checkCompletions(newTerminals) {
+      for (const t of newTerminals) {
+        if (t.status !== 'running' && !notifiedTerminals.has(t.id)) {
+          notifiedTerminals.add(t.id);
+          const isSuccess = t.status === 'exited' && (t.exitCode === 0 || t.exitCode === null);
+          const title = isSuccess ? ('Job \'' + t.id + '\' Completed (Exit 0)') : ('Job \'' + t.id + '\' Stopped (' + t.status + ')');
+          const msg = '• Command: ' + t.command + '\n• PID: ' + (t.pid ?? 'N/A');
+          showToast(title, msg, isSuccess);
+        }
+      }
+    }
+
+    function updateLiveTickers() {
+      const now = Date.now();
+      document.querySelectorAll('.live-uptime-ticker').forEach(el => {
+        const isRunning = el.getAttribute('data-is-running') === 'true';
+        if (!isRunning) return;
+        const start = parseInt(el.getAttribute('data-start-time'), 10);
+        if (start) {
+          const sec = Math.max(0, Math.floor((now - start) / 1000));
+          const m = Math.floor(sec / 60);
+          const s = sec % 60;
+          el.innerText = m > 0 ? (m + 'm ' + s + 's') : (sec + 's');
+        }
+      });
+
+      const terms = appState.terminals || [];
+      const running = terms.filter(t => t.status === 'running');
+      const bannerEl = document.getElementById('continuous-running-banner');
+      if (bannerEl) {
+        if (running.length > 0) {
+          bannerEl.classList.remove('hidden');
+          const countEl = document.getElementById('banner-running-count');
+          if (countEl) countEl.innerText = running.length + (running.length === 1 ? ' Job Active' : ' Jobs Active');
+          const summaryEl = document.getElementById('banner-running-summary');
+          if (summaryEl) {
+            summaryEl.innerText = running.map(t => {
+              const sec = Math.max(0, Math.floor((now - t.startTime) / 1000));
+              const m = Math.floor(sec / 60);
+              const s = sec % 60;
+              const timeStr = m > 0 ? (m + 'm ' + s + 's') : (sec + 's');
+              return t.id + ' [' + timeStr + '] • ' + t.command;
+            }).join('  |  ');
+          }
+        } else {
+          bannerEl.classList.add('hidden');
+        }
+      }
+    }
+
     async function refreshData() {
       try {
         const res = await fetch('/api/status');
         if (res.ok) {
           const data = await res.json();
+          checkCompletions(data.terminals || []);
           appState = data;
           renderTerminals();
+          updateLiveTickers();
           if (activeTerminalId) fetchTerminalLogs();
         }
       } catch {}
@@ -586,8 +695,12 @@ export function getDashboardHtml(initialData) {
     } else {
       renderTerminals();
     }
+    updateLiveTickers();
 
-    // Real-time live polling every 1.5 seconds
+    // Live continuous ticker every 1 second
+    setInterval(updateLiveTickers, 1000);
+
+    // Live server polling every 1.5 seconds
     setInterval(refreshData, 1500);
   </script>
 </body>

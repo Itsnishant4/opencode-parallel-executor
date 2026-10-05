@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { TerminalUI } from "./dist/ui/terminal-ui.js";
 import { WebDashboardServer } from "./dist/ui/web-dashboard.js";
+import { BackgroundTerminalManager } from "./dist/background-terminal.js";
 import { ParallelExecutorPlugin } from "./dist/index.js";
 
 console.log("🧪 Starting Terminal & Web/Desktop UI Test Suite...\n");
@@ -11,12 +12,28 @@ const banner = TerminalUI.renderBanner();
 assert.ok(banner.includes("OPENCODE PARALLEL EXECUTOR"), "Banner must contain project title");
 assert.ok(banner.includes("v1.1.0"), "Banner must contain version number");
 
+const bgMgr = BackgroundTerminalManager.getInstance(process.cwd());
+await bgMgr.start({
+  command: "node -e 'setInterval(() => {}, 1000)'",
+  id: "tui-active-proc",
+  waitMs: 150,
+});
+
+// Test continuous running ticker
+const liveTicker = TerminalUI.renderRunningTicker(process.cwd());
+assert.ok(liveTicker.includes("CONTINUOUS BACKGROUND MONITOR (ACTIVE)"), "Ticker must show active monitor title");
+assert.ok(liveTicker.includes("tui-active-proc"), "Ticker must include process ID");
+assert.ok(liveTicker.includes("PID:"), "Ticker must display process PID");
+
 const dashboardTui = TerminalUI.renderDashboard(process.cwd());
 assert.ok(dashboardTui.includes("SYSTEM & ENGINE METRICS"), "Dashboard must include System Metrics");
 assert.ok(dashboardTui.includes("In-Memory RAM Cache:"), "Dashboard must show RAM cache status");
+assert.ok(dashboardTui.includes("CONTINUOUS BACKGROUND MONITOR (ACTIVE)"), "Dashboard must display active background monitor");
 assert.ok(dashboardTui.includes("ACTIVE & RECENT BACKGROUND TERMINALS"), "Dashboard must show Background Terminals table");
 assert.ok(dashboardTui.includes("QUICK COMMANDS & SHORTCUTS"), "Dashboard must include command navigator");
-console.log("   ✅ Terminal TUI rendering verified!");
+
+await bgMgr.stop({ id: "tui-active-proc", force: true });
+console.log("   ✅ Terminal TUI rendering & continuous running ticker verified!");
 
 // 2. Test: Web & Desktop Dashboard Server
 console.log("▶ 2. Testing Web & Desktop Dashboard Server on local HTTP port...");
@@ -30,12 +47,14 @@ const htmlRes = await fetch(`${url}/`);
 assert.strictEqual(htmlRes.status, 200, "Root should return 200 OK");
 const htmlText = await htmlRes.text();
 assert.ok(htmlText.includes("OpenCode Parallel Executor"), "HTML must contain title");
-assert.ok(htmlText.includes("Background Terminals"), "HTML must contain Background Terminals tab");
+assert.ok(htmlText.includes("continuous-running-banner"), "HTML must contain continuous running banner");
+assert.ok(htmlText.includes("toast-container"), "HTML must contain toast notification container");
+assert.ok(htmlText.includes("updateLiveTickers"), "HTML must contain live continuous second ticker");
 assert.ok(htmlText.includes("tailwind"), "HTML must include Tailwind CSS");
-console.log("   ✅ HTML Dashboard rendered and served successfully!");
+console.log("   ✅ HTML Dashboard rendered with continuous running banner and served successfully!");
 
-// 3. Test: REST API Endpoints (/api/status, /api/run, /api/logs, /api/stop)
-console.log("▶ 3. Testing Dashboard REST APIs...");
+// 3. Test: REST API Endpoints (/api/status, /api/run, /api/logs, /api/stop, /api/notifications)
+console.log("▶ 3. Testing Dashboard REST APIs & Notifications...");
 const statusRes = await fetch(`${url}/api/status`);
 assert.strictEqual(statusRes.status, 200);
 const statusData = await statusRes.json();
@@ -56,6 +75,11 @@ assert.strictEqual(runRes.status, 200);
 const runJson = await runRes.json();
 assert.strictEqual(runJson.ok, true, "Launch via API should succeed");
 
+// Verify active running count in status
+const runningStatusRes = await fetch(`${url}/api/status`);
+const runningStatusData = await runningStatusRes.json();
+assert.strictEqual(runningStatusData.runningCount, 1, "Status must report 1 actively running terminal");
+
 // Wait 300ms for logs
 await new Promise(r => setTimeout(r, 300));
 
@@ -75,9 +99,23 @@ assert.strictEqual(stopRes.status, 200);
 const stopJson = await stopRes.json();
 assert.strictEqual(stopJson.ok, true, "Stop via API should succeed");
 
+// Test GET /api/notifications
+const notifsRes = await fetch(`${url}/api/notifications?clear=false`);
+assert.strictEqual(notifsRes.status, 200);
+const notifsJson = await notifsRes.json();
+assert.strictEqual(notifsJson.ok, true);
+assert.ok(Array.isArray(notifsJson.notifications), "Should return notifications array");
+assert.ok(notifsJson.notifications.some(n => n.id === "test-web-terminal"), "Should contain completed test-web-terminal");
+
+// Test POST /api/notifications/clear
+const clearRes = await fetch(`${url}/api/notifications/clear`, { method: "POST" });
+assert.strictEqual(clearRes.status, 200);
+const clearJson = await clearRes.json();
+assert.strictEqual(clearJson.ok, true);
+
 // Stop Web Server
 await webServer.stop();
-console.log("   ✅ Dashboard REST APIs verified!");
+console.log("   ✅ Dashboard REST APIs & Notifications verified!");
 
 // 4. Test: OpenCode Plugin Tool Registrations
 console.log("▶ 4. Testing OpenCode plugin tool registration for dashboard tools...");

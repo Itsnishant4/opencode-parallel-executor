@@ -32,6 +32,33 @@ export class TerminalUI {
         return lines.join("\n");
     }
     /**
+     * Generates a compact or prominent live running ticker when background terminals are active.
+     */
+    static renderRunningTicker(rootDir = process.cwd()) {
+        const c = TerminalUI.color;
+        const bgMgr = BackgroundTerminalManager.getInstance(rootDir);
+        const running = bgMgr.getAllTerminals().filter((t) => t.status === "running");
+        if (running.length === 0)
+            return "";
+        const lines = [];
+        lines.push(c.green("┌── ⚡ CONTINUOUS BACKGROUND MONITOR (ACTIVE) ──────────────────────────────────────────────┐"));
+        for (const t of running) {
+            const uptimeSec = Math.round((Date.now() - t.startTime) / 1000);
+            const m = Math.floor(uptimeSec / 60);
+            const s = uptimeSec % 60;
+            const uptimeStr = m > 0 ? `${m}m ${s}s` : `${s}s`;
+            const pId = c.bold(t.id.length > 20 ? (t.id.slice(0, 19) + "…") : t.id.padEnd(20));
+            const pPid = `PID: ${t.pid ?? "-"}`.padEnd(10).slice(0, 10);
+            const pUp = `⏱️ ${uptimeStr}`.padEnd(10).slice(0, 10);
+            const pCmd = t.command.slice(0, 32).padEnd(32);
+            lines.push(c.green("│") +
+                `  🟢 ${pId} ${pPid} ${c.yellow(pUp)}  ${c.dim(pCmd)}`.padEnd(95) +
+                c.green("│"));
+        }
+        lines.push(c.green("└──────────────────────────────────────────────────────────────────────────────────────────┘"));
+        return lines.join("\n");
+    }
+    /**
      * Generates a complete, beautiful terminal dashboard view with real-time metrics.
      */
     static renderDashboard(rootDir = process.cwd()) {
@@ -66,6 +93,19 @@ export class TerminalUI {
             c.cyan("│"));
         out.push(c.cyan("└──────────────────────────────────────────────────────────────────────────────────────────┘"));
         out.push("");
+        // Continuous Live Running Monitor if any processes are running
+        if (runningTerms.length > 0) {
+            out.push(TerminalUI.renderRunningTicker(rootDir));
+            out.push("");
+        }
+        const pendingNotifs = bgMgr.peekPendingNotifications();
+        if (pendingNotifs.length > 0) {
+            out.push(c.yellow(`🔔 ${pendingNotifs.length} UNREAD BACKGROUND COMPLETION NOTIFICATION(S) PENDING:`));
+            for (const n of pendingNotifs.slice(-3)) {
+                out.push(c.dim(`   • '${n.id}' finished (${n.status}, exit code ${n.exitCode ?? 0}) after ${(n.durationMs / 1000).toFixed(1)}s`));
+            }
+            out.push("");
+        }
         // Section 2: Active Background Terminals
         out.push(c.cyan("┌── ACTIVE & RECENT BACKGROUND TERMINALS ──────────────────────────────────────────────────┐"));
         out.push(c.cyan("│ ID           │ PID    │ STATUS    │ UPTIME   │ COMMAND             │ LAST LOG PREVIEW    │"));

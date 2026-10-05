@@ -1,6 +1,21 @@
 import { type ChildProcess } from "node:child_process";
 import { type WriteStream } from "node:fs";
 import { z } from "zod";
+export interface BackgroundCompletionNotification {
+    id: string;
+    command: string;
+    cwd: string;
+    pid: number | undefined;
+    status: "exited" | "error" | "killed";
+    exitCode: number | null;
+    signal: string | null;
+    durationMs: number;
+    startTime: number;
+    completedAt: number;
+    lastOutputSummary: string;
+    formattedMessage: string;
+    sessionId?: string;
+}
 export interface BackgroundTerminalRecord {
     id: string;
     command: string;
@@ -17,6 +32,8 @@ export interface BackgroundTerminalRecord {
     buffer: string[];
     proc: ChildProcess;
     logStream?: WriteStream;
+    sessionId?: string;
+    completionNotified?: boolean;
 }
 export declare const BackgroundRunArgsSchema: {
     command: z.ZodString;
@@ -48,6 +65,9 @@ export declare const BackgroundStopArgsSchema: {
     }>>>;
     force: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
 };
+export declare const BackgroundNotificationsArgsSchema: {
+    clear: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
+};
 export declare const BackgroundTerminalMasterArgsSchema: {
     action: z.ZodEnum<{
         input: "input";
@@ -60,6 +80,7 @@ export declare const BackgroundTerminalMasterArgsSchema: {
         send: "send";
         stop: "stop";
         kill: "kill";
+        notifications: "notifications";
     }>;
     command: z.ZodOptional<z.ZodString>;
     id: z.ZodOptional<z.ZodString>;
@@ -74,11 +95,15 @@ export declare const BackgroundTerminalMasterArgsSchema: {
         SIGKILL: "SIGKILL";
     }>>;
     force: z.ZodOptional<z.ZodBoolean>;
+    clear: z.ZodOptional<z.ZodBoolean>;
 };
 export declare class BackgroundTerminalManager {
     private static instance;
     private rootDir;
     private terminals;
+    private pendingNotifications;
+    private completionListeners;
+    private maxStoredNotifications;
     private nextSeq;
     private maxRingBufferLines;
     private logDir;
@@ -88,10 +113,34 @@ export declare class BackgroundTerminalManager {
     private registerProcessCleanup;
     private ensureLogDir;
     /**
+     * Registers a callback listener invoked whenever any background terminal finishes.
+     */
+    onCompletion(listener: (notif: BackgroundCompletionNotification) => void): () => void;
+    /**
+     * Returns and optionally drains all queued completion notifications.
+     */
+    getPendingNotifications(clear?: boolean): BackgroundCompletionNotification[];
+    /**
+     * Peeks at pending completion notifications without draining them.
+     */
+    peekPendingNotifications(): BackgroundCompletionNotification[];
+    /**
+     * Clears all pending completion notifications.
+     */
+    clearNotifications(): void;
+    /**
+     * Returns human-readable notification text for main agent turns.
+     */
+    getNotificationsFormatted(clear?: boolean): string;
+    /**
+     * Emits a completion event, enqueues the notification, and notifies all listeners.
+     */
+    emitCompletion(record: BackgroundTerminalRecord): void;
+    /**
      * Starts a shell process in the background and returns immediately
      * after a brief grace period (default 300ms) with initial status & output.
      */
-    start(args: z.infer<z.ZodObject<typeof BackgroundRunArgsSchema>>, sessionDir?: string): Promise<string>;
+    start(args: z.infer<z.ZodObject<typeof BackgroundRunArgsSchema>>, sessionDir?: string, sessionId?: string): Promise<string>;
     /**
      * Retrieves status for a specific terminal, or formats a complete table
      * of all running and recent background terminals.

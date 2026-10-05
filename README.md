@@ -162,7 +162,8 @@ opencode debug config | grep "opencode-parallel-executor"
 | | `background_logs`, `bg_logs` | **< 0.5ms** | Reads live stdout/stderr logs from background terminal. | 5,000-line ring buffer, regex search, tail limit. |
 | | `background_input`, `bg_input` | **< 0.1ms** | Sends stdin input to active background terminal. | Stdin stream writing, interactive prompt handling. |
 | | `background_stop`, `bg_stop` | **< 2ms** | Gracefully stops or force-kills background process tree. | Process group tree kill, port release guarantee. |
-| | `background_terminal` | **Master** | Unified multi-action controller for background terminals. | Supports run, status, logs, input, stop, list. |
+| | `background_notifications`, `bg_notifications` | **< 0.1ms** | Checks & drains background process completion alerts. | Automatic agent turn injection + exit code summaries. |
+| | `background_terminal` | **Master** | Unified multi-action controller for background terminals. | Supports run, status, logs, input, stop, notifications. |
 | **Concurrency** | `batch_execute` | **10 Lanes** | High-concurrency parallel runner. | Up to 30 parallel lanes; 10 tasks in ~14ms. |
 | | `turbo_parallel` | **10 Lanes** | High-speed batch alias. | Heterogeneous task dispatch. |
 | | `parallel_execute` | **DAG** | Dependency-analyzed workflow scheduler. | Kahn's algorithm, Write-After-Read (WAR) protection. |
@@ -327,6 +328,31 @@ Stop the server and release ports safely:
   "force": true
 }
 ```
+
+#### 🔔 Automatic Main Agent Notifications On Completion
+When any background terminal finishes running its task (either `exit code 0`, non-zero error, or process termination):
+- **Direct Session Prompt**: If OpenCode SDK is connected, the plugin dispatches an immediate structured notification to the active conversation session.
+- **Turn Context Injection**: In `chat.message` and `tool.execute.after`, pending notifications are automatically injected into the agent turn so the main agent immediately knows the background command finished:
+  ```text
+  🔔 [BACKGROUND TERMINAL COMPLETED] 🟢
+  • Terminal ID:  dev-server
+  • Command:      npm run build
+  • Status:       SUCCESS (Exit code 0)
+  • Duration:     14.2s
+  • Recent Output Summary:
+    vite v5.4.2 building for production...
+    ✓ 42 modules transformed.
+    dist/index.js 14.2 kB
+  ```
+- **Manual Drain**: Inspect or clear unread notifications at any time via `background_notifications()`.
+
+#### ⚡ Continuous Running Indicators in All UIs
+- **Terminal TUI**: Real-time `⚡ CONTINUOUS BACKGROUND MONITOR (ACTIVE)` header displaying live process IDs, continuous elapsed duration, and active commands across every dashboard and status call.
+- **Desktop & Web Dashboard (`dashboard(target='web')`)**:
+  - Top glowing status alert banner (`⚡ BACKGROUND TERMINAL ACTIVELY RUNNING`) with radar pulse indicators.
+  - Client-side second-by-second ticking duration timers (`0m 45s`, `0m 46s`...).
+  - Active terminal cards styled with pulsing glowing green borders (`LIVE RUNNING 🟢`).
+  - Animated floating toast notifications automatically pop up when any background terminal completes!
 </details>
 
 ---

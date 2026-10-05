@@ -131,6 +131,8 @@ const expectedTools = [
   "bg_stop",
   "background_kill",
   "bg_kill",
+  "background_notifications",
+  "bg_notifications",
 ];
 
 for (const t of expectedTools) {
@@ -138,6 +140,45 @@ for (const t of expectedTools) {
   assert.strictEqual(typeof tools[t].execute, "function", `Tool '${t}.execute' must be a function`);
 }
 console.log(`   ✅ All ${expectedTools.length} background terminal tools & aliases verified in OpenCode plugin!`);
+
+// 9. Test: Background Process Completion Notification & Hook Delivery
+console.log("▶ 9. Testing completion notification emission & agent notification hooks...");
+let capturedNotif = null;
+const unsub = mgr.onCompletion((notif) => {
+  capturedNotif = notif;
+});
+
+// Launch a background task that completes in ~200ms
+await mgr.start({
+  command: "node -e 'setTimeout(() => console.log(\"JOB_COMPLETED_SUCCESSFULLY\"), 200)'",
+  id: "test-notify-job",
+  waitMs: 50,
+});
+
+// Wait 400ms for process to exit
+await new Promise((r) => setTimeout(r, 400));
+
+assert.ok(capturedNotif !== null, "Completion listener must have captured notification");
+assert.strictEqual(capturedNotif.id, "test-notify-job", "Notification ID should match");
+assert.strictEqual(capturedNotif.status, "exited", "Status should be exited");
+assert.strictEqual(capturedNotif.exitCode, 0, "Exit code should be 0");
+assert.ok(capturedNotif.formattedMessage.includes("[BACKGROUND TERMINAL COMPLETED]"), "Message must contain completion banner");
+assert.ok(capturedNotif.formattedMessage.includes("JOB_COMPLETED_SUCCESSFULLY"), "Message must contain output summary");
+unsub();
+
+// Check tool: background_notifications
+const notifRes = await tools.background_notifications.execute({ clear: false });
+assert.ok(notifRes.includes("test-notify-job"), "background_notifications tool must report completed job");
+assert.ok(notifRes.includes("SUCCESS (Exit code 0)"), "background_notifications tool must report success");
+
+// Test chat.message hook delivery
+const mockChatInput = { sessionID: "test-session-123" };
+const mockChatOutput = { message: {}, parts: [] };
+await pluginInstance["chat.message"](mockChatInput, mockChatOutput);
+assert.ok(mockChatOutput.parts.length > 0, "chat.message hook must inject pending completion notification");
+assert.ok(mockChatOutput.parts[0].text.includes("test-notify-job"), "Injected part must contain job ID");
+
+console.log("   ✅ Completion notifications and main agent hook delivery verified!");
 
 // Cleanup
 await pluginInstance.dispose();

@@ -201,6 +201,22 @@ export class WebDashboardServer {
             res.end(JSON.stringify({ ok: true }));
             return;
         }
+        // 8. API: Background Terminal Completion Notifications
+        if (pathname === "/api/notifications" && req.method === "GET") {
+            const bgMgr = BackgroundTerminalManager.getInstance(this.rootDir);
+            const shouldClear = parsedUrl.searchParams.get("clear") === "true";
+            const notifs = bgMgr.getPendingNotifications(shouldClear);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true, notifications: notifs }));
+            return;
+        }
+        if (pathname === "/api/notifications/clear" && req.method === "POST") {
+            const bgMgr = BackgroundTerminalManager.getInstance(this.rootDir);
+            bgMgr.clearNotifications();
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+        }
         res.writeHead(404, { "Content-Type": "text/plain" });
         res.end("Not Found");
     }
@@ -224,6 +240,8 @@ export class WebDashboardServer {
         return {
             terminals,
             cacheStats,
+            notifications: bgMgr.peekPendingNotifications(),
+            runningCount: terminals.filter((t) => t.status === "running").length,
             rootDir: this.rootDir,
             port,
         };

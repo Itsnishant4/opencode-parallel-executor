@@ -5,6 +5,22 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { z } from "zod";
 import { OutputCompactor } from "./compact-output.js";
 
+export interface BackgroundCompletionNotification {
+  id: string;
+  command: string;
+  cwd: string;
+  pid: number | undefined;
+  status: "exited" | "error" | "killed";
+  exitCode: number | null;
+  signal: string | null;
+  durationMs: number;
+  startTime: number;
+  completedAt: number;
+  lastOutputSummary: string;
+  formattedMessage: string;
+  sessionId?: string;
+}
+
 export interface BackgroundTerminalRecord {
   id: string;
   command: string;
@@ -21,6 +37,8 @@ export interface BackgroundTerminalRecord {
   buffer: string[];
   proc: ChildProcess;
   logStream?: WriteStream;
+  sessionId?: string;
+  completionNotified?: boolean;
 }
 
 export const BackgroundRunArgsSchema = {
@@ -110,10 +128,18 @@ export const BackgroundStopArgsSchema = {
     .describe("If true, immediately force-terminates the entire process tree using SIGKILL."),
 };
 
+export const BackgroundNotificationsArgsSchema = {
+  clear: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Whether to drain/clear retrieved notifications from the pending queue (default: true)."),
+};
+
 export const BackgroundTerminalMasterArgsSchema = {
   action: z
-    .enum(["run", "start", "status", "list", "logs", "read", "input", "send", "stop", "kill"])
-    .describe("Action to perform on background terminals: 'run' (launch), 'status'/'list' (inspect), 'logs' (read output), 'input' (send stdin), or 'stop'/'kill' (terminate)."),
+    .enum(["run", "start", "status", "list", "logs", "read", "input", "send", "stop", "kill", "notifications"])
+    .describe("Action to perform on background terminals: 'run' (launch), 'status'/'list' (inspect), 'logs' (read output), 'input' (send stdin), 'stop'/'kill' (terminate), or 'notifications' (drain completion alerts)."),
   command: z.string().optional().describe("Command to run when action is 'run'/'start'"),
   id: z.string().optional().describe("Terminal identifier"),
   cwd: z.string().optional().describe("Working directory for execution"),
@@ -123,12 +149,16 @@ export const BackgroundTerminalMasterArgsSchema = {
   input: z.string().optional().describe("Text to send to stdin"),
   signal: z.enum(["SIGTERM", "SIGINT", "SIGKILL"]).optional().describe("Kill signal to send"),
   force: z.boolean().optional().describe("Force kill flag"),
+  clear: z.boolean().optional().describe("Clear notifications flag when action is 'notifications'"),
 };
 
 export class BackgroundTerminalManager {
   private static instance: BackgroundTerminalManager | null = null;
   private rootDir: string;
   private terminals = new Map<string, BackgroundTerminalRecord>();
+  private pendingNotifications: BackgroundCompletionNotification[] = [];
+  private completionListeners: Array<(notif: BackgroundCompletionNotification) => void> = [];
+  private maxStoredNotifications = 100;
   private nextSeq = 1;
   private maxRingBufferLines = 5000;
   private logDir: string;
@@ -181,12 +211,121 @@ export class BackgroundTerminalManager {
   }
 
   /**
+   * Registers a callback listener invoked whenever any background terminal finishes.
+   */
+  public onCompletion(listener: (notif: BackgroundCompletionNotification) => void): () => void {
+    this.completionListeners.push(listener);
+    return () => {
+      const idx = this.completionListeners.indexOf(listener);
+      if (idx !== -1) this.completionListeners.splice(idx, 1);
+    };
+  }
+
+  /**
+   * Returns and optionally drains all queued completion notifications.
+   */
+  public getPendingNotifications(clear = true): BackgroundCompletionNotification[] {
+    if (!clear) return [...this.pendingNotifications];
+    const notifs = [...this.pendingNotifications];
+    this.pendingNotifications = [];
+    return notifs;
+  }
+
+  /**
+   * Peeks at pending completion notifications without draining them.
+   */
+  public peekPendingNotifications(): BackgroundCompletionNotification[] {
+    return [...this.pendingNotifications];
+  }
+
+  /**
+   * Clears all pending completion notifications.
+   */
+  public clearNotifications(): void {
+    this.pendingNotifications = [];
+  }
+
+  /**
+   * Returns human-readable notification text for main agent turns.
+   */
+  public getNotificationsFormatted(clear = true): string {
+    const notifs = this.getPendingNotifications(clear);
+    if (notifs.length === 0) {
+      return "ℹ️ No pending background terminal completion notifications.";
+    }
+    return `🔔 Background Terminal Completion Notifications (${notifs.length} event${notifs.length > 1 ? "s" : ""}):\n\n` +
+      notifs.map((n) => n.formattedMessage).join("\n\n");
+  }
+
+  /**
+   * Emits a completion event, enqueues the notification, and notifies all listeners.
+   */
+  public emitCompletion(record: BackgroundTerminalRecord): void {
+    if (record.completionNotified) return;
+    record.completionNotified = true;
+
+    const durationSec = ((record.durationMs ?? (Date.now() - record.startTime)) / 1000).toFixed(1);
+    const isSuccess = record.status === "exited" && (record.exitCode === 0 || record.exitCode === null);
+    const statusIcon = isSuccess ? "🟢" : (record.status === "killed" ? "🛑" : "🔴");
+    const statusDesc = isSuccess
+      ? "SUCCESS (Exit code 0)"
+      : (record.status === "killed" ? `TERMINATED / KILLED (Signal: ${record.signal || "SIGTERM"})` : `FAILED (Exit code ${record.exitCode ?? "?"})`);
+
+    const lastLines = record.buffer.slice(-6).map((l) => l.trimEnd()).filter(Boolean);
+    const summaryText = lastLines.length > 0 ? lastLines.join("\n") : "[No output captured]";
+
+    const formattedMessage = `🔔 [BACKGROUND TERMINAL COMPLETED] ${statusIcon}
+=================================================
+• Terminal ID:  ${record.id}
+• Command:      ${record.command}
+• Process ID:   ${record.pid ?? "N/A"}
+• Status:       ${statusDesc}
+• Duration:     ${durationSec}s
+• Working Dir:  ${record.cwd}
+• Completed At: ${new Date().toLocaleTimeString()}
+=================================================
+📄 Output Summary:
+${summaryText}
+=================================================`;
+
+    const notif: BackgroundCompletionNotification = {
+      id: record.id,
+      command: record.command,
+      cwd: record.cwd,
+      pid: record.pid,
+      status: record.status === "running" ? "exited" : record.status,
+      exitCode: record.exitCode,
+      signal: record.signal,
+      durationMs: record.durationMs ?? (Date.now() - record.startTime),
+      startTime: record.startTime,
+      completedAt: Date.now(),
+      lastOutputSummary: summaryText,
+      formattedMessage,
+      sessionId: record.sessionId,
+    };
+
+    this.pendingNotifications.push(notif);
+    if (this.pendingNotifications.length > this.maxStoredNotifications) {
+      this.pendingNotifications.shift();
+    }
+
+    for (const listener of this.completionListeners) {
+      try {
+        listener(notif);
+      } catch (err) {
+        console.error("Error in background terminal completion listener:", err);
+      }
+    }
+  }
+
+  /**
    * Starts a shell process in the background and returns immediately
    * after a brief grace period (default 300ms) with initial status & output.
    */
   public async start(
     args: z.infer<z.ZodObject<typeof BackgroundRunArgsSchema>>,
-    sessionDir?: string
+    sessionDir?: string,
+    sessionId?: string
   ): Promise<string> {
     const rawCommand = (args.command || "").trim();
     if (!rawCommand) {
@@ -247,6 +386,8 @@ export class BackgroundTerminalManager {
       buffer: [],
       proc,
       logStream,
+      sessionId,
+      completionNotified: false,
     };
 
     const appendLog = (chunk: string) => {
@@ -278,6 +419,7 @@ export class BackgroundTerminalManager {
       record.endTime = Date.now();
       record.durationMs = record.endTime - record.startTime;
       appendLog(`\n[Process error: ${err.message}]`);
+      this.emitCompletion(record);
     });
 
     proc.on("close", (code: number | null, signal: string | null) => {
@@ -293,6 +435,7 @@ export class BackgroundTerminalManager {
           record.logStream.end();
         } catch {}
       }
+      this.emitCompletion(record);
     });
 
     this.terminals.set(termId, record);
@@ -362,7 +505,25 @@ ${recent || "[No output captured yet]"}`;
       return "ℹ️ No background terminals have been launched yet. Use 'background_run(command='...')' to start one.";
     }
 
+    const runningList = Array.from(this.terminals.values()).filter((t) => t.status === "running");
+    let runningHeader = "";
+    if (runningList.length > 0) {
+      const items = runningList.map((t) => {
+        const up = Math.round((Date.now() - t.startTime) / 1000);
+        return `${t.id} (PID ${t.pid ?? "?"}, ${up}s)`;
+      });
+      runningHeader = `⚡ [RUNNING IN BACKGROUND (${runningList.length})]: ${items.join(" | ")}\n\n`;
+    }
+
+    let notifFooter = "";
+    if (this.pendingNotifications.length > 0) {
+      notifFooter = `\n\n🔔 [${this.pendingNotifications.length} UNREAD COMPLETION NOTIFICATION(S)]\n` +
+        this.pendingNotifications.map((n) => `• '${n.id}' (${n.status}, code: ${n.exitCode ?? 0}) - ${n.command}`).join("\n") +
+        "\n(Use 'background_notifications()' to review full output summaries)";
+    }
+
     const rows: string[] = [];
+    if (runningHeader) rows.push(runningHeader.trimEnd());
     rows.push("┌──────────────┬────────┬──────────┬──────────┬────────────────────────────────────────────────┐");
     rows.push("│ ID           │ PID    │ STATUS   │ DURATION │ COMMAND                                        │");
     rows.push("├──────────────┼────────┼──────────┼──────────┼────────────────────────────────────────────────┤");
@@ -381,6 +542,7 @@ ${recent || "[No output captured yet]"}`;
     }
 
     rows.push("└──────────────┴────────┴──────────┴──────────┴────────────────────────────────────────────────┘");
+    if (notifFooter) rows.push(notifFooter);
     return rows.join("\n");
   }
 
@@ -474,6 +636,7 @@ ${recent || "[No output captured yet]"}`;
 
     if (!pid) {
       term.status = "killed";
+      this.emitCompletion(term);
       return `✅ Terminal '${termId}' marked as stopped.`;
     }
 
@@ -519,6 +682,7 @@ ${recent || "[No output captured yet]"}`;
     }
 
     const durationSec = Math.round(((term.endTime || Date.now()) - term.startTime) / 1000);
+    this.emitCompletion(term);
     return `🛑 Background terminal '${termId}' (PID: ${pid}) has been terminated with ${signal} after ${durationSec}s.`;
   }
 
@@ -545,6 +709,9 @@ ${recent || "[No output captured yet]"}`;
       case "status":
       case "list":
         return this.getStatus(args.id);
+
+      case "notifications":
+        return this.getNotificationsFormatted(args.clear ?? true);
 
       case "logs":
       case "read":

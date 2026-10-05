@@ -28,6 +28,7 @@ import {
   BackgroundLogsArgsSchema,
   BackgroundInputArgsSchema,
   BackgroundStopArgsSchema,
+  BackgroundNotificationsArgsSchema,
   BackgroundTerminalMasterArgsSchema,
 } from "./background-terminal.js";
 import { TerminalUI } from "./ui/terminal-ui.js";
@@ -54,6 +55,25 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
   const snapshotManager = WorkingTreeSnapshotManager.getInstance(rootDir);
   const refLocator = new CodeReferenceLocator(rootDir);
   const bgManager = BackgroundTerminalManager.getInstance(rootDir);
+
+  let lastActiveSessionID: string | null = null;
+
+  // Listen to background process completions and notify the main agent session via SDK if available
+  const unsubscribeCompletion = bgManager.onCompletion(async (notif) => {
+    if (lastActiveSessionID && (pluginInput.client as any)?.session?.promptAsync) {
+      try {
+        await (pluginInput.client as any).session.promptAsync({
+          path: { id: lastActiveSessionID },
+          body: {
+            parts: [{
+              type: "text",
+              text: notif.formattedMessage,
+            }],
+          },
+        });
+      } catch {}
+    }
+  });
 
   // Initialize background RAM pre-warming and native filesystem kqueue watcher
   const watcher = FastWatcher.getInstance(rootDir);
@@ -452,7 +472,8 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     args: BackgroundRunArgsSchema,
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
-      return bgManager.start(args, sessionDir);
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
+      return bgManager.start(args, sessionDir, context?.sessionID);
     },
   });
 
@@ -507,7 +528,18 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     args: BackgroundTerminalMasterArgsSchema,
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       return bgManager.executeMaster(args, sessionDir);
+    },
+  });
+
+  // 22. Background Terminal Completion Notifications Tool
+  const backgroundNotificationsTool = tool({
+    description:
+      "Check, inspect, and drain completion notifications from background terminals that finished running. Returns exit codes, duration, and output summaries for completed background tasks.",
+    args: BackgroundNotificationsArgsSchema,
+    async execute(args) {
+      return bgManager.getNotificationsFormatted(args.clear ?? true);
     },
   });
 
@@ -617,6 +649,8 @@ inspect RAM cache metrics, and trigger 10-lane concurrency benchmarks!`;
       bg_stop: backgroundStopTool,
       background_kill: backgroundStopTool,
       bg_kill: backgroundStopTool,
+      background_notifications: backgroundNotificationsTool,
+      bg_notifications: backgroundNotificationsTool,
 
       // 7. Interactive UI & Live Dashboards (Terminal TUI, Desktop App & Web Browser)
       dashboard: dashboardTool,
@@ -625,14 +659,42 @@ inspect RAM cache metrics, and trigger 10-lane concurrency benchmarks!`;
       background_dashboard: dashboardTool,
       terminal_ui: dashboardTool,
     },
-    // Transparent Lifecycle Interception: Pre-warm cache on default tool calls
+    // Transparent Lifecycle Interception & Context Tracking
     "tool.execute.before": async (input, output) => {
+      if (input.sessionID) lastActiveSessionID = input.sessionID;
       if ((input.tool === "read" || input.tool === "fast_read") && output.args) {
         const p = output.args.path || output.args.filePath;
         if (p) {
           const abs = path.isAbsolute(p) ? p : path.resolve(rootDir, p);
           cache.get(abs).catch(() => {});
         }
+      }
+    },
+    // Immediately deliver any background task completions to the main agent upon tool execution
+    "tool.execute.after": async (input, output) => {
+      if (input.sessionID) lastActiveSessionID = input.sessionID;
+      const pending = bgManager.getPendingNotifications(true);
+      if (pending.length > 0) {
+        const alerts = pending
+          .map((n) => `🔔 [BACKGROUND TASK COMPLETED]: '${n.id}' finished (${n.status}, code ${n.exitCode ?? 0}) after ${(n.durationMs / 1000).toFixed(1)}s`)
+          .join("\n");
+        output.output = (output.output || "") + `\n\n${alerts}`;
+      }
+    },
+    // Deliver background task completion messages into incoming chat message turns
+    "chat.message": async (input, output) => {
+      if (input.sessionID) lastActiveSessionID = input.sessionID;
+      const pending = bgManager.getPendingNotifications(true);
+      if (pending.length > 0) {
+        const messageText = `🔔 [BACKGROUND TASK(S) COMPLETED]\n` +
+          pending.map((n) => n.formattedMessage).join("\n\n");
+        output.parts.unshift({
+          id: `bg-notif-${Date.now()}`,
+          sessionID: input.sessionID,
+          messageID: input.messageID || `msg-${Date.now()}`,
+          type: "text",
+          text: messageText,
+        } as any);
       }
     },
     "experimental.chat.system.transform": async (_input, output) => {
@@ -642,6 +704,7 @@ inspect RAM cache metrics, and trigger 10-lane concurrency benchmarks!`;
     },
     // Official OpenCode cleanup hook called when plugin unloads or reloads
     dispose: async () => {
+      unsubscribeCompletion();
       watcher.stop();
       PersistentShell.getInstance().shutdown();
       FastFileCache.getInstance().clear();

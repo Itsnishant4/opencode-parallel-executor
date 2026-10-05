@@ -6,6 +6,10 @@ export declare class TerminalUI {
      */
     static renderBanner(): string;
     /**
+     * Generates a compact or prominent live running ticker when background terminals are active.
+     */
+    static renderRunningTicker(rootDir?: string): string;
+    /**
      * Generates a complete, beautiful terminal dashboard view with real-time metrics.
      */
     static renderDashboard(rootDir?: string): string;
