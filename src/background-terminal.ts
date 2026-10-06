@@ -246,6 +246,35 @@ export class BackgroundTerminalManager {
   }
 
   /**
+   * Removes a specific notification from the pending queue (e.g. when claimed by promptAsync).
+   */
+  public removePendingNotification(target: BackgroundCompletionNotification): boolean {
+    const idx = this.pendingNotifications.findIndex(
+      (n) => n === target || (n.id === target.id && n.completedAt === target.completedAt)
+    );
+    if (idx !== -1) {
+      this.pendingNotifications.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Re-queues a notification if async session delivery fails.
+   */
+  public requeueNotification(notif: BackgroundCompletionNotification): void {
+    const exists = this.pendingNotifications.some(
+      (n) => n === notif || (n.id === notif.id && n.completedAt === notif.completedAt)
+    );
+    if (!exists) {
+      this.pendingNotifications.push(notif);
+      if (this.pendingNotifications.length > this.maxStoredNotifications) {
+        this.pendingNotifications.shift();
+      }
+    }
+  }
+
+  /**
    * Returns human-readable notification text for main agent turns.
    */
   public getNotificationsFormatted(clear = true): string {
@@ -271,7 +300,10 @@ export class BackgroundTerminalManager {
       ? "SUCCESS (Exit code 0)"
       : (record.status === "killed" ? `TERMINATED / KILLED (Signal: ${record.signal || "SIGTERM"})` : `FAILED (Exit code ${record.exitCode ?? "?"})`);
 
-    const lastLines = record.buffer.slice(-6).map((l) => l.trimEnd()).filter(Boolean);
+    const lastLines = record.buffer
+      .slice(-6)
+      .map((l) => OutputCompactor.stripAnsi(l).trimEnd())
+      .filter(Boolean);
     const summaryText = lastLines.length > 0 ? lastLines.join("\n") : "[No output captured]";
 
     const formattedMessage = `🔔 [BACKGROUND TERMINAL COMPLETED] ${statusIcon}
@@ -691,7 +723,8 @@ ${recent || "[No output captured yet]"}`;
    */
   public async executeMaster(
     args: z.infer<z.ZodObject<typeof BackgroundTerminalMasterArgsSchema>>,
-    sessionDir?: string
+    sessionDir?: string,
+    sessionId?: string
   ): Promise<string> {
     switch (args.action) {
       case "run":
@@ -703,7 +736,8 @@ ${recent || "[No output captured yet]"}`;
             cwd: args.cwd,
             waitMs: args.waitMs,
           },
-          sessionDir
+          sessionDir,
+          sessionId
         );
 
       case "status":

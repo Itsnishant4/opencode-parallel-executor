@@ -171,16 +171,88 @@ const notifRes = await tools.background_notifications.execute({ clear: false });
 assert.ok(notifRes.includes("test-notify-job"), "background_notifications tool must report completed job");
 assert.ok(notifRes.includes("SUCCESS (Exit code 0)"), "background_notifications tool must report success");
 
-// Test chat.message hook delivery
-const mockChatInput = { sessionID: "test-session-123" };
-const mockChatOutput = { message: {}, parts: [] };
+// Test chat.message hook delivery (empty parts fallback -> must start with "prt")
+const mockChatInput = { sessionID: "ses_test123", messageID: "msg_test123" };
+const mockChatOutput = { message: { id: "msg_test123" }, parts: [] };
 await pluginInstance["chat.message"](mockChatInput, mockChatOutput);
 assert.ok(mockChatOutput.parts.length > 0, "chat.message hook must inject pending completion notification");
+assert.ok(mockChatOutput.parts[0].id.startsWith("prt"), `Part ID must start with 'prt', got: ${mockChatOutput.parts[0].id}`);
+assert.ok(mockChatOutput.parts[0].messageID.startsWith("msg"), `Message ID must start with 'msg', got: ${mockChatOutput.parts[0].messageID}`);
+assert.ok(mockChatOutput.parts[0].sessionID.startsWith("ses"), `Session ID must start with 'ses', got: ${mockChatOutput.parts[0].sessionID}`);
 assert.ok(mockChatOutput.parts[0].text.includes("test-notify-job"), "Injected part must contain job ID");
 
-console.log("   ✅ Completion notifications and main agent hook delivery verified!");
+// 10. Test: Idle Agent Completion Delivery via promptAsync & OpenCode SessionPrompt.createUserMessage simulation
+console.log("▶ 10. Testing idle agent promptAsync delivery & SchemaError prevention...");
+let promptAsyncCalls = [];
+let simulatedPlugin = null;
+
+const mockClient = {
+  session: {
+    list: async () => ({ data: [{ id: "ses_idle_agent_999" }] }),
+    promptAsync: async (req) => {
+      promptAsyncCalls.push(req);
+      // Simulate OpenCode's SessionPrompt.createUserMessage calling "chat.message" hook
+      // and then validating every part with Session.updatePart (requiring id.startsWith("prt"))
+      const simulatedOutput = {
+        message: { id: "msg_opencode_native_1" },
+        parts: req.body.parts.map((p, idx) => ({
+          id: `prt_opencode_native_${idx}`,
+          sessionID: req.path.id,
+          messageID: "msg_opencode_native_1",
+          type: p.type,
+          text: p.text,
+        })),
+      };
+      await simulatedPlugin["chat.message"](
+        { sessionID: req.path.id, messageID: "msg_opencode_native_1" },
+        simulatedOutput
+      );
+      for (const part of simulatedOutput.parts) {
+        assert.ok(
+          typeof part.id === "string" && part.id.startsWith("prt"),
+          `SchemaError reproduction check failed: Expected string starting with "prt", got "${part.id}"`
+        );
+      }
+      return { data: simulatedOutput };
+    },
+  },
+};
+
+simulatedPlugin = await ParallelExecutorPlugin({
+  directory: process.cwd(),
+  worktree: process.cwd(),
+  serverUrl: new URL("http://localhost:4096"),
+  client: mockClient,
+  project: {},
+  $: {},
+});
+
+// Start a background terminal and kill it while AI is idle
+await simulatedPlugin.tool.background_run.execute(
+  {
+    command: "node -e 'console.log(\"\\x1b[32mANSI_COLOR_LINE\\x1b[0m\"); setInterval(() => {}, 1000)'",
+    id: "test-idle-kill",
+    waitMs: 150,
+  },
+  { directory: process.cwd(), sessionID: "ses_idle_agent_999" }
+);
+
+// Kill the background terminal externally (or when AI is idle)
+await mgr.stop({ id: "test-idle-kill", force: false });
+
+// Wait 300ms for the 150ms debounced onCompletion -> promptAsync to execute
+await new Promise((r) => setTimeout(r, 350));
+
+assert.strictEqual(promptAsyncCalls.length, 1, "promptAsync must be called exactly once when background terminal stops while AI is idle");
+assert.strictEqual(promptAsyncCalls[0].path.id, "ses_idle_agent_999", "promptAsync must target the active session ID");
+assert.ok(promptAsyncCalls[0].body.parts[0].text.includes("test-idle-kill"), "promptAsync message must include killed terminal ID");
+assert.ok(promptAsyncCalls[0].body.parts[0].text.includes("ANSI_COLOR_LINE"), "promptAsync message must include output summary");
+assert.ok(!promptAsyncCalls[0].body.parts[0].text.includes("\x1b[32m"), "ANSI escape codes must be stripped from output summary");
+
+console.log("   ✅ Idle agent promptAsync delivery & OpenCode 'prt' SchemaError prevention verified!");
 
 // Cleanup
+await simulatedPlugin.dispose();
 await pluginInstance.dispose();
 await mgr.disposeAll();
 

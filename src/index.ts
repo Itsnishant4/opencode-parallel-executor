@@ -59,19 +59,52 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
   let lastActiveSessionID: string | null = null;
 
   // Listen to background process completions and notify the main agent session via SDK if available
-  const unsubscribeCompletion = bgManager.onCompletion(async (notif) => {
-    if (lastActiveSessionID && (pluginInput.client as any)?.session?.promptAsync) {
-      try {
-        await (pluginInput.client as any).session.promptAsync({
-          path: { id: lastActiveSessionID },
-          body: {
-            parts: [{
-              type: "text",
-              text: notif.formattedMessage,
-            }],
-          },
-        });
-      } catch {}
+  const unsubscribeCompletion = bgManager.onCompletion((notif) => {
+    // Wait briefly (150ms) so that if the agent is actively executing a tool (e.g. background_stop),
+    // "tool.execute.after" can drain and attach the notification inline without spawning a duplicate user turn.
+    const timer = setTimeout(async () => {
+      // Only send via promptAsync if the notification hasn't already been drained by tool.execute.after or chat.message
+      if (!bgManager.removePendingNotification(notif)) {
+        return;
+      }
+
+      let targetSessionID = notif.sessionId || lastActiveSessionID;
+      const sessionApi = (pluginInput.client as any)?.session;
+
+      if (!targetSessionID && sessionApi?.list) {
+        try {
+          const res = await sessionApi.list();
+          const sessions = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
+          if (sessions.length > 0 && sessions[0]?.id) {
+            targetSessionID = sessions[0].id;
+            lastActiveSessionID = targetSessionID;
+          }
+        } catch {}
+      }
+
+      if (targetSessionID && sessionApi?.promptAsync) {
+        try {
+          await sessionApi.promptAsync({
+            path: { id: targetSessionID },
+            body: {
+              parts: [{
+                type: "text",
+                text: notif.formattedMessage,
+              }],
+            },
+          });
+        } catch {
+          // Re-queue if promptAsync fails so the next tool.execute.after or chat.message hook delivers it
+          bgManager.requeueNotification(notif);
+        }
+      } else {
+        // No session or promptAsync available yet; keep queued for hooks
+        bgManager.requeueNotification(notif);
+      }
+    }, 150);
+
+    if (typeof (timer as any).unref === "function") {
+      (timer as any).unref();
     }
   });
 
@@ -484,6 +517,7 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     args: BackgroundStatusArgsSchema,
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : rootDir;
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       if (!args.id) {
         return TerminalUI.renderDashboard(sessionDir);
       }
@@ -496,7 +530,8 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     description:
       "Read live stdout/stderr logs from a background terminal. Supports tailing recent lines, pagination offset, regex/substring searching, and clearing buffer.",
     args: BackgroundLogsArgsSchema,
-    async execute(args) {
+    async execute(args, context) {
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       return bgManager.getLogs(args);
     },
   });
@@ -506,7 +541,8 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     description:
       "Send stdin input to an actively running background terminal process (e.g. typing responses to interactive prompts, typing 'rs' for nodemon restart, answering confirmations).",
     args: BackgroundInputArgsSchema,
-    async execute(args) {
+    async execute(args, context) {
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       return bgManager.sendInput(args);
     },
   });
@@ -516,7 +552,8 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     description:
       "Terminate a background terminal process and its entire process tree safely using SIGTERM (graceful) or SIGKILL (force).",
     args: BackgroundStopArgsSchema,
-    async execute(args) {
+    async execute(args, context) {
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       return bgManager.stop(args);
     },
   });
@@ -529,7 +566,7 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : undefined;
       if (context?.sessionID) lastActiveSessionID = context.sessionID;
-      return bgManager.executeMaster(args, sessionDir);
+      return bgManager.executeMaster(args, sessionDir, context?.sessionID);
     },
   });
 
@@ -538,7 +575,8 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     description:
       "Check, inspect, and drain completion notifications from background terminals that finished running. Returns exit codes, duration, and output summaries for completed background tasks.",
     args: BackgroundNotificationsArgsSchema,
-    async execute(args) {
+    async execute(args, context) {
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       return bgManager.getNotificationsFormatted(args.clear ?? true);
     },
   });
@@ -554,6 +592,7 @@ export const ParallelExecutorPlugin: Plugin = async (pluginInput: PluginInput) =
     },
     async execute(args, context) {
       const sessionDir = typeof context?.directory === "string" ? context.directory : rootDir;
+      if (context?.sessionID) lastActiveSessionID = context.sessionID;
       const target = args.target || "all";
       const webServer = WebDashboardServer.getInstance(sessionDir);
 
@@ -685,16 +724,38 @@ inspect RAM cache metrics, and trigger 10-lane concurrency benchmarks!`;
     "chat.message": async (input, output) => {
       if (input.sessionID) lastActiveSessionID = input.sessionID;
       const pending = bgManager.getPendingNotifications(true);
-      if (pending.length > 0) {
+      if (pending.length > 0 && output && Array.isArray(output.parts)) {
         const messageText = `🔔 [BACKGROUND TASK(S) COMPLETED]\n` +
           pending.map((n) => n.formattedMessage).join("\n\n");
-        output.parts.unshift({
-          id: `bg-notif-${Date.now()}`,
-          sessionID: input.sessionID,
-          messageID: input.messageID || `msg-${Date.now()}`,
-          type: "text",
-          text: messageText,
-        } as any);
+
+        // Prefer mutating an existing text part in-place so OpenCode's native "prt_..." schema ID is preserved
+        const existingTextPart = output.parts.find(
+          (p: any) => p && p.type === "text" && typeof p.text === "string"
+        ) as any;
+
+        if (existingTextPart) {
+          if (!existingTextPart.text.includes(messageText)) {
+            existingTextPart.text = `${messageText}\n\n${existingTextPart.text}`;
+          }
+        } else {
+          // OpenCode Session.updatePart strictly requires part.id to start with "prt" and messageID to start with "msg"
+          const validMsgId =
+            (output as any).message?.id ||
+            (input.messageID && String(input.messageID).startsWith("msg")
+              ? input.messageID
+              : `msg_${Date.now().toString(36)}`);
+          const validSesId =
+            input.sessionID && String(input.sessionID).startsWith("ses")
+              ? input.sessionID
+              : input.sessionID || `ses_${Date.now().toString(36)}`;
+          output.parts.unshift({
+            id: `prt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
+            sessionID: validSesId,
+            messageID: validMsgId,
+            type: "text",
+            text: messageText,
+          } as any);
+        }
       }
     },
     "experimental.chat.system.transform": async (_input, output) => {
